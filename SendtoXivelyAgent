@@ -1,0 +1,91 @@
+// Agent test code
+
+// Send SMS message by Twilio
+const TWILIO_ACCOUNT_SID = "AC2125ebaf03194d2f1cf1902b0c4592bb"
+const TWILIO_AUTH_TOKEN = "32f6d0007503cc300765cf6ef9e4e4d0"
+const TWILIO_FROM_NUMBER = "+18017011865" // your phone no goes here
+const TWILIO_TO_NUMBER = "+14053975091" // FMB destination phone no
+// const TWILIO_TO_NUMBER = "+18473402434"  // Crump destination phone no
+// const TWILIO_TO_NUMBER = "+13174320753" // Randy destination phone no
+
+function send_sms(number, message) {
+    server.log("Sending sms:");
+    server.log(message);
+    local twilio_url = format("https://api.twilio.com/2010-04-01/Accounts/%s/SMS/Messages.json", TWILIO_ACCOUNT_SID);
+    local auth = "Basic " + http.base64encode(TWILIO_ACCOUNT_SID+":"+TWILIO_AUTH_TOKEN);
+    local body = http.urlencode({From=TWILIO_FROM_NUMBER, To=number, Body=message});
+    local req = http.post(twilio_url, {Authorization=auth}, body);
+    local res = req.sendsync();
+    if(res.statuscode != 201) {
+        server.log("error sending message: "+res.body);
+    }
+}
+
+device.on("sendSMS", function(options) {
+    if (options.other == 1) {
+    send_sms(TWILIO_TO_NUMBER, options.mess);
+    }
+    else {
+    local req = http.get("https://wellmark.webscript.io/smstimer");
+    local res = req.sendsync();
+    local smstimer = res.body.tointeger();  
+    local datetime = date();
+    server.log("smstimer");
+    server.log(smstimer);
+    if (smstimer == 0 && options.highlevelalarm) {
+        send_sms(TWILIO_TO_NUMBER, format("High Level Alarm on Production Water Tank 91 Reese Lease %d:%d - Wellmark Monitoring Services", datetime.hour-5, datetime.min));
+    }
+    else if (smstimer == 3*6) {
+        send_sms(TWILIO_TO_NUMBER, format("Days to Overfill: 30 on Crude Oil Tank 83 Reese Lease %d:%d - Wellmark Monitoring Services", datetime.hour-5, datetime.min));
+    }
+    else if (smstimer == 6*6) {
+        send_sms(TWILIO_TO_NUMBER, format("Days to Empty: 1 on Well 22 Chem Tank Reese Lease %d:%d - Wellmark Monitoring Services", datetime.hour-5, datetime.min));
+    }
+    smstimer += 1;
+    if (smstimer > 9*6) {
+        smstimer = 0;
+    }
+    local headers = { "Content-Type":"text/plain" };
+    local req = http.post("https://wellmark.webscript.io/smstimer", headers, format("%d", smstimer));
+    local res = req.sendsync();
+    }
+});
+
+// string for the feed and datastream name info
+// example: "http://api.cosm.com/v2/feeds/120528/datastreams/Pressure.csv"
+url_info <- "http://api.cosm.com/v2/feeds/%d/datastreams/%s.csv";
+
+function sendtocosm(param) {
+    local http_put_table = {
+        "Content-Type": "text/csv",
+        "X-ApiKey": "3PtUOR3nhTcsmTcQgIC_b_H1KaWSAKxMWXJhUFBJc0t5OD0g"
+    };
+    http_put_table["X-ApiKey"] = param.key;
+    local req = http.put(format(url_info, param.feed, param.kind), http_put_table, format("%6.3f", param.value));
+    req.sendasync(function(response) {
+        local rspstat = response.statuscode;
+//        device.send("success", response.statuscode);
+        device.send("success", rspstat);
+
+//        if (response.statuscode != 200) 
+        if (rspstat != 200) 
+        {
+//            server.log(format("agent send %s response code: %d ", param.kind, response.statuscode));
+            server.log(format("agent send %s response code: %d ", param.kind, rspstat));
+        }
+    });
+}
+
+device.on("ADCval", sendtocosm); // raw ADC value
+device.on("Barrels", sendtocosm); // calculated Barrels
+device.on("ImpVolts", sendtocosm); // Imp reported vcc
+device.on("Level", sendtocosm); // Tank level calculated in inches
+// device.on("Pressure", sendtocosm); // calculated sensor pressure
+device.on("Signal_Strength", sendtocosm); // rssi signal strength seen by Imp
+device.on("Temperature", sendtocosm); // temperature sensor reading in F
+device.on("Volts", sendtocosm); // volts calculated from ADCval
+device.on("Switch", sendtocosm); // switch value on/off
+device.on("Switch1", sendtocosm); // switch value on/off
+device.on("Vbat", sendtocosm); // send battery voltage
+device.on("BootPass", sendtocosm); // send boot count
+
