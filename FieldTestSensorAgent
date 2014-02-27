@@ -1,0 +1,187 @@
+// Agent test code
+
+// Send SMS message by Twilio
+const TWILIO_ACCOUNT_SID = "AC2125ebaf03194d2f1cf1902b0c4592bb"
+const TWILIO_AUTH_TOKEN = "32f6d0007503cc300765cf6ef9e4e4d0"
+const TWILIO_FROM_NUMBER = "+18017011865" // your phone no goes here
+const TWILIO_TO_NUMBER = "+14053975091" // FMB destination phone no
+// const TWILIO_TO_NUMBER = "+18473402434"  // Crump destination phone no
+// const TWILIO_TO_NUMBER = "+13174320753" // Randy destination phone no
+
+function send_sms(number, message) {
+    server.log("Sending sms:");
+    server.log(message);
+    local twilio_url = format("https://api.twilio.com/2010-04-01/Accounts/%s/SMS/Messages.json", TWILIO_ACCOUNT_SID);
+    local auth = "Basic " + http.base64encode(TWILIO_ACCOUNT_SID+":"+TWILIO_AUTH_TOKEN);
+    local body = http.urlencode({From=TWILIO_FROM_NUMBER, To=number, Body=message});
+    local req = http.post(twilio_url, {Authorization=auth}, body);
+    local res = req.sendsync();
+    if(res.statuscode != 201) {
+        server.log("error sending message: "+res.body);
+    }
+}
+
+device.on("sendSMS", function(options) {
+    if (options.other == 1) {
+    send_sms(TWILIO_TO_NUMBER, options.mess);
+    }
+    else {
+    local req = http.get("https://wellmark.webscript.io/smstimer");
+    local res = req.sendsync();
+    local smstimer = res.body.tointeger();  
+    local datetime = date();
+    server.log("smstimer");
+    server.log(smstimer);
+    if (smstimer == 0 && options.highlevelalarm) {
+        send_sms(TWILIO_TO_NUMBER, format("High Level Alarm on Production Water Tank 91 Reese Lease %d:%d - Wellmark Monitoring Services", datetime.hour-5, datetime.min));
+    }
+    else if (smstimer == 3*6) {
+        send_sms(TWILIO_TO_NUMBER, format("Days to Overfill: 30 on Crude Oil Tank 83 Reese Lease %d:%d - Wellmark Monitoring Services", datetime.hour-5, datetime.min));
+    }
+    else if (smstimer == 6*6) {
+        send_sms(TWILIO_TO_NUMBER, format("Days to Empty: 1 on Well 22 Chem Tank Reese Lease %d:%d - Wellmark Monitoring Services", datetime.hour-5, datetime.min));
+    }
+    smstimer += 1;
+    if (smstimer > 9*6) {
+        smstimer = 0;
+    }
+    local headers = { "Content-Type":"text/plain" };
+    local req = http.post("https://wellmark.webscript.io/smstimer", headers, format("%d", smstimer));
+    local res = req.sendsync();
+    }
+});
+
+// 1. Name and create a Xively feed
+// 2. Get the activation code and run the curl script to activate
+// 3. Record the activation response, which includes the apikey and feed number
+// 5. In the table below, make the entry under the feed name created in Xively, and activation data returned
+// 6. When an Imp is ready to be activated for one of the Xively feeds, get the ImpID and put it in the appropriate slot
+
+imp_table <- 
+    {
+        // insert new imps below
+        // -- Only sensor imps should be included below!
+        InformaChemPump1 = {   impid = "230789eb6e4936ee", feed = 627874217, apikey = "w1buKrbzAknYTWiVGUsIsYY4C0asD1iF5KErllKbXR3VpEMi"  },
+        InformaBrineTank1 = {   impid = "23423feb6e4936ee", feed = 1432343757, apikey = "9ehXeWj4AFJ5TD2rKiRInZ664Xv6qiuiGtxciWGLseWIxJ3e"
+                                , sample_interval = 30, voltage_enable = 0  },
+        InformaBrineTank2 = {   impid = "xx236f544cead3dbee", feed = 670154089, apikey = "j8V2lVnlChthy46Ocv4epRgONhM9Iupu5cltAcfy9KzCk5es"
+                                , sample_interval = 10, voltage_enable = 0  },
+        InformaCrudeTank1 = {   impid = "23484feb6e4936ee", feed = 2033339257, apikey = "fIiRLSNzPa6k4aLm6MahSd3G9NTqwwEsL3UWUql2EGrHKp9o" 
+                                , sample_interval = 10, voltage_enable = 0  },
+        InformaCrudeTank2 = {   impid = "232c9feb6e4936ee", feed = 865841957, apikey = "kql4mJhhNrGWqAimEQOTJkzOSqwXzN2k9YmIFXbBY5n82ZEn" 
+                                , sample_interval = 20, voltage_enable = 0  },
+        InformaChemTank1 = {   impid = "xx236f544cead3dbee", feed = 2105788416, apikey = "CbJjQsmbIKKhmvfwNXTXm2geO9lmsROQX3yB1YQKo37F6H1o"  
+                                , sample_interval = 10 },
+        InformaChemTank2 = {   impid = "xx23703eeb6e4936ee", feed = 1995311635, apikey = "EY8ON0sBYDAVmocxjYIrWAxUggZzxcNrrO1R9NsvXyxthfu1"  
+                                , sample_interval = 300, voltage_enable = 0  },
+
+        DevonChemPump1 = {   impid = "2307xx", feed = 2008148184, apikey = "qEIbXubi2bD6DjQBNkyWEGv5fBq2kbCijIxvS3TyZ30dHhlT"  },
+        DevonChemPump2 = {   impid = "2307xx", feed = 802343163, apikey = "m1tKlcAgqxPY180HDQe4f82IJWA9LIvFI6dcyuhCvPePYUmb"  },
+        DevonChemTank1 = {   impid = "xx236f544cead3dbee", feed = 547315046, apikey = "lNbRVoON2zpFe9LmMrBrS86Fni0Zm1W6h6x2ayumNhDYQUav"  
+                              , sample_interval = 300 },
+        DevonChemTank2 = {   impid = "23565aeb6e4936ee", feed = 277137983, apikey = "OjD9OsvgG4NpsBCtoLYt67FLMBmzOnLbXTQFHoFlHu3l0R21"  
+                               , sample_interval = 300 },
+        DevonBrineTank1 = {   impid = "2307xx", feed = 1761598148, apikey = "vlylRGnqifM3rpjcmdZRNk6ZC62Akl2j0KTAq7SCG4CQSR3G"  },
+        DevonBrineTank2 = {   impid = "2307xx", feed = 33889245, apikey = "z7ltHrzMtiEfbYJI6hrAPEWQHVzh7VXPMwfnZH0eUizGA2vb"  },
+
+        WellMarkDemoChemPump = {   impid = "2307xx", feed = 1266829895, apikey = "MI5vJbWAsfChUMfJc5bzRmAHpx0vcRWesnzuzaR3Wq6SuU0c"  },
+        WellMarkDemoLevel = {   impid = "xx236f544cead3dbee", feed = 2012325919, apikey = "suAoU5udCBqBOD9BmM3RGTuCyVf6STHHHmOcssfEjPhL1tPV"  
+                                , sample_interval = 10, voltage_enable = 0  },
+        WellMarkDemoSwitch = {   impid = "2307xx", feed = 848109198, apikey = "CLT3ehpzXv1RAwYQDsSzE8HmXQLcjspRBPcc3YQDgbwSKahT"  },
+
+        x232ace4dead3dbee =
+        {   impid = "xx232ace4dead3dbee",
+            feed = 160290434,
+            apikey = "xBDfwFVyH4Z6QhVQhCtB4rn7WiwimW0RIIyUwFfkJswDXBRX"
+        },
+        
+        x230789eb6e4936ee =
+        {   impid = "xx230789eb6e4936ee",
+            feed = 1148628160,
+            apikey = "Qcg17ohrbU8VrmpBgfrG9lWqkmaJ5TYbbbz2uIq53p8tiI7P"
+        },
+        
+        xx230789eb6e4936ee =
+        {   impid = "x230789eb6e4936ee",
+            feed = 467812498,
+            apikey = "XEiiq8NpLgyLWXMICo1CsQRQa2Fd5vJ9omtmvQhSPNiyHKlX"
+        },
+        
+        x233c66eb6e4936ee =
+        {   impid = "xx233c66eb6e4936ee",
+            feed = 2116002450,
+            apikey = "RhNcfs5gkF93Bzw5RGywafbwpRHYZnryrSwVndoxlibi3vak"
+        },
+        
+        x2342173643fc42ee =
+        {   impid = "xx2342173643fc42ee", // dummy id
+            feed = 467812498,
+            apikey = "XEiiq8NpLgyLWXMICo1CsQRQa2Fd5vJ9omtmvQhSPNiyHKlX"
+        }
+        
+    }; // end imp_table
+
+// bssid: 881fa13a9c3c     SOM Network3                Home Network
+// bssid: 0015ff7bf869     Verizon-MiFi5510L-F869      Verizon Jetpack 
+// bssid: 0015ff6109ef     SA2100-WSXW                 Novatel Modem
+
+agent_myimpid <- 0; // Imp ID
+agent_myapikey <- 0; // api key
+agent_myfeed <- 0;  // feed id
+
+// This function gets the ImpID from the associated Imp
+// and then connects it to a specific Xively data feed
+device.on("impid", function(impid)
+{
+//    server.log("Agent received ImpID: "+impid.ImpID);
+    // need to put an x infront of the imp id
+local    agent_myimpid = format("%s",impid.ImpID);
+local agent_BootCount = impid.BootCount;
+//    agent_myimpid = impid.ImpID;
+//    server.log("Agent received ImpID: "+agent_myimpid);
+    foreach ( key in imp_table)
+    {
+//        server.log("-value of key: "+key+"value of feed: "+key.feed);
+        if (key.impid == agent_myimpid)
+        {
+            agent_myapikey = key.apikey;
+            agent_myfeed = key.feed;
+            if(agent_BootCount != 1) // only do this at beginning of run
+            {
+                if ("sample_interval" in key)
+                {
+                    server.log("found sample_interval in key");
+                    device.send("interval", {interval = key.sample_interval});
+                }
+                if ("voltage_enable" in key)
+                {
+                    server.log("found voltage_enable in key");
+                    device.send("voltage_enable", {voltage_enable = key.voltage_enable});
+                }
+            } // if(agent_BootCount < 2) 
+        } // if (key.impid == agent_myimpid)
+    } // foreach ( key in imp_table)
+    
+//    server.log("Agent api key: "+agent_myapikey);
+
+});
+
+device.on("csv", function(csv) {
+    
+    if (csv.len() > 0){
+        server.log("Sending Xively this data: " + csv);    
+        
+        http.put(format("%s%d%s","https://api.xively.com/v2/feeds/", agent_myfeed, ".csv"), {
+            "X-Api-Key": agent_myapikey,
+            "Authorization": "Basic ZmJyYXN3ZWxsOm1lcnJpdHQxODY1"
+        }, csv).sendasync(function(response) {
+            server.log(response.statuscode);
+//            fetchNewSetpoint();
+        });
+    }
+    else {
+        server.log("Nothing to send to Xively.");    
+//        fetchNewSetpoint();
+    }
+
+});
