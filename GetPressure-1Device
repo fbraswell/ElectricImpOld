@@ -1,0 +1,166 @@
+// FMB Get Pressure from Sensor & temp
+
+// enter power save mode
+imp.setpowersave(true);
+
+// Imp Table
+// imp boards
+const imp1 = "2348143643fc42ee"; // Demo
+const imp2 = "237c523643fc42ee";
+const imp3 = "2342173643fc42ee";
+
+// 0c2a690008a2 imp2 macaddr
+// 0c2a69000c03 imp1 macaddr
+// 0c2a690012f4 imp3 macaddr
+
+// 48282fc363f4 bassid - John's hot spot 
+// 7ec537f05356 bassid - Frank's iPhone tether
+// 001f5b86ee76 bassid - SOM3 Home Network
+// ae5877784cad bassid - John's iPhone tether
+
+local impTable = 
+{
+    imp1  = "Systems of Merritt, Inc."
+    imp2  = "Jackson Oil Company"
+    imp3  = "Wilson Production Company"	
+}
+
+// Output structure for sending temperature to server
+
+tempOutStrF <- OutputPort("Temperature (F)", "string");
+pressureOutStr <- OutputPort("Pressure", "string");
+tempOutF    <- OutputPort("Temperature (F)", "number");
+
+tankADCOut <- OutputPort("tankADCvalue", "number");
+tankVoltsOut <- OutputPort("tankVolts", "number");
+tankPressureOut <- OutputPort("tankPressure", "number");
+tankInchesOut <- OutputPort("tankInches", "number");
+tankBarrelsOut <- OutputPort("tankBarrels", "number");
+impVoltsOut <- OutputPort("ImpVolts", "number");
+impRSSIOut <- OutputPort("ImpRSSI", "number");
+
+gtemp <- 0;
+gpressure <- 0;
+gformin <- 20; // init value in seconds - take samples
+enable_reg <- 1; // regulator on = 1, off = 0
+
+class FormInput extends InputPort
+{
+    name = "Form Get Info";
+    type = "number";
+    constructor()
+    {
+//        server.log("In FormInput Constructor!");
+    }
+    
+    function set(info)
+    {
+        server.show(format("From form: %d", info));
+        server.log(format("From form: %d", info));
+        gformin = info; // set global with info
+        // when we receive something get temp and send it back
+        getPressure();
+    }
+}
+
+function getTemp()
+{
+    local analogval = hardware.pin5.read(); // 0 - 65535
+    local tempC = ((analogval * 0.00005035)-0.5)*100.0;
+    local tempF = (9.0/5.0)*tempC + 32.0;
+    gtemp = tempF; // set global temp var
+    tempOutF.set(tempF);
+    tempOutStrF.set(format("TempC: %6.3f; TempF: %6.3f", tempC, tempF));
+    local d = date();
+//    server.log(format("date: Year: %d Mo: %d Day: %d -  %d:%d.%d", d.year, d.month+1, d.day, d.hour, d.min, d.sec));
+//    server.log(format("%d-%d-%d %d:%d.%d TempF: %6.3f", d.month+1, d.day, d.year, d.hour, d.min, d.sec, tempF));
+//    imp.wakeup(5, getTemp);
+}
+
+# The imp has 12 bit ADC and maps it across 65536 range
+# so 0-3.3V maps to 0-65535
+# Transducer range is .5-2.5V, starting at 0psi
+# ratio is 65535/3.3 = 19,859/V
+# thus 0 psi should read about 9,929
+function getPressure()
+{
+    local analogval = hardware.pin7.read(); // 0 - 65535
+    tankADCOut.set(analogval);
+//    local pressure = analogval * 1.0; // calc pressure here
+    local volts = (hardware.voltage()/4096.0) * (analogval/16.0); // calc pressure here
+    tankVoltsOut.set(volts);
+//    local pressure = 120.0 * volts - 60.0;
+//    local pressure = 4.285 * volts - 2.1425;
+    local pressure = 63.0/70.0 * volts;
+    tankPressureOut.set(pressure);
+    local density = 0.82; // density of crude oil
+    density = 0.035714;
+//    local inches = pressure / density;
+    local inches = 70 * volts - 35.0;
+    tankInchesOut.set(inches);
+    local barrels = inches * 200 / 180; // 200bbl/180in tank ratio
+    tankBarrelsOut.set(barrels);
+    impVoltsOut.set(hardware.voltage());
+    impRSSIOut.set(imp.rssi());
+//    local pressure = inches;
+//    pressure = volts;
+    tankPressureOut.set(pressure);
+    pressureOutStr.set(format("Pressure: %6.3f", pressure));
+    local d = date();
+    // server.log(format("%d-%d-%d %d:%d.%d UT, TempF: %6.3f", d.month+1, d.day, d.year, d.hour, d.min, d.sec, tempF));
+    server.log(format("%02d-%02d-%d %02d:%02d.%02d, pressure: %8.3f, %6.1f degF IMP: %6.1f rssi, %6.3f v, mem %d, ID: %s, bssid: %s, macaddr: %s, reg: %s", 
+                        d.month+1, d.day, d.year, d.hour, d.min, d.sec,
+                        pressure, gtemp, imp.rssi(), 
+                        hardware.voltage(), imp.getmemoryfree(), hardware.getimpeeid(), 
+                        imp.getbssid(), imp.getmacaddress(), enable_reg?"on ":"off "));
+}
+ 
+function getAnalogData()
+{
+//    enable_reg = enable_reg?0:1;
+    hardware.pin8.write(1); // alternately turn regulator on/off for testing
+    imp.sleep(1.0); // block code for 100ms while sensors wake up
+    getTemp(); // temp wakes up pretty fast
+    getPressure(); // pressure takes quite a while
+    hardware.pin8.write(0); // turn off regulator after sampling
+    imp.wakeup(gformin, getAnalogData);
+//    imp.onidle(function() {server.sleepfor(gformin)});
+}
+
+// Analog read on pin 5 for temp
+hardware.pin5.configure(ANALOG_IN);
+
+// Analog read on pin 7 for pressure
+hardware.pin7.configure(ANALOG_IN);
+
+// Digital Write on pin 8 - control 3V regulator for sensors
+hardware.pin8.configure(DIGITAL_OUT);
+
+// Get on the planner
+// getimpeeid()
+// imp.configure("Pressure & Temp Measurement", [FormInput()], [tempOut, tempOutStr, pressureOut, pressureOutStr]);
+// imp.configure(impTable{hardware.getimpeeid()}, [FormInput()], [tempOut, tempOutStr, pressureOut, pressureOutStr]);
+// local impID = hardware.getimpeeid();
+local impID;
+switch (hardware.getimpeeid())
+{
+    case imp1: impID = "Systems of Merritt, Inc. imp1"; break;
+                
+    case imp2: impID = "Jackson Oil Company imp2"; break; 
+    
+    case imp3: impID = "Wilson Production Company imp3"; break; 
+    
+    default: impID = "Default"
+}
+
+imp.configure(impID, [FormInput()], [tempOutF, tankADCOut, tankVoltsOut, tankPressureOut,
+                        tankInchesOut, tankBarrelsOut, impVoltsOut, impRSSIOut]);
+
+server.log("--------Start 1 Program------------"); 
+
+// enter power save mode
+imp.setpowersave(true);
+
+getAnalogData();
+// imp.onidle(function() {server.sleepfor(gformin)});
+// server.sleepfor(gformin)
