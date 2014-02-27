@@ -1,0 +1,116 @@
+// Blink-O-Matic Code
+// Variable to represent LED state
+ledState <- 0;
+// blink function called every 100ms
+// Variable for inhibit state
+inhibit <- 0;
+
+// Create output object
+out1 <- OutputPort("Switch", "number");
+ 
+// Store the last state so we know when we've changed; this starts out as -1 until we read the switch
+laststate <- -1;
+ 
+// Debounce code: ignore transitions for 50ms after event
+ignore <- false;
+
+// blink function
+function blink()
+{
+   // check for inhibit
+   if(inhibit)
+   {
+       // blinking inhibited, turn off LED
+ //      ledState = 0;
+       hardware.pin9.write(1);
+   }
+   else
+   {
+       // change state
+        ledState = ledState?0:1;
+        // reflect state to pin
+        hardware.pin9.write(ledState);
+    
+        // Schedule the next state change
+        imp.wakeup(0.1, blink);
+   }
+   
+} // function blink()
+
+
+function debounce() 
+{
+    // We can take notice of transitions from now onward
+    ignore = false;
+ 
+    // Ensure state is in sync
+    check_state();
+}
+ 
+function check_state() 
+{
+    local s = hardware.pin1.read();
+ 
+    // Has the state changed?
+    if (s != laststate) {
+        // Yes, note the state, send it, and update the planner
+        laststate = s;
+        out1.set(s);
+        server.show(s?"on":"off");
+        server.log(s?"on":"off");
+    }        
+}
+ 
+// This function is called whenever the imp detects a change on pin1
+function switched() 
+{
+    if (!ignore) 
+    {
+        check_state();
+ 
+        // Ignore bounces
+        ignore = true;
+        imp.wakeup(0.05, debounce);
+    }
+}
+ 
+
+// input class for LED control channel
+class input extends InputPort
+{
+    name = "LED control"
+    type = "number"
+    
+    function set(value)
+    {
+        if (value == 0)
+        {
+            // 0 = inhibit LED operation
+            inhibit = 1;
+        } else
+        {
+            // 1 = enable LED operation
+            inhibit = 0;
+            blink();
+        }
+    }
+}
+
+// configure pin 9 for open drain with internal pull-up
+hardware.pin9.configure(DIGITAL_OUT_OD_PULLUP);
+// register with server
+// imp.configure("Button Blink-O-Matic", [input()], []);
+
+imp.configure("Button Blink-O-Matic", [], [out1]);
+
+// Set up pin1 to be an input with a pull-up. This means it'll float high when the switch is open.
+// This also registers the callback handler "switched" which will be automatically called whenever the
+// pin changes state.
+hardware.pin1.configure(DIGITAL_IN_PULLUP, switched);
+ 
+// Call check_state at startup to ensure things are in sync.
+check_state();
+
+// start blinking
+// blink();
+// end of code
