@@ -1,0 +1,266 @@
+
+imp.setpowersave(true);                                                                                                                                           
+                                                                                                                                                                  
+disconnectReason <- "";                                                                                                                                           
+function getDisconnectReason(reason) {                                                                                                                            
+    if (reason == NO_WIFI) {                                                                                                                                      
+        return "Wifi went away";                                                                                                                                  
+    }                                                                                                                                                             
+    if (reason == NO_IP_ADDRESS) {                                                                                                                                
+        return "Failed to get IP address";                                                                                                                        
+    }                                                                                                                                                             
+    if (reason == NO_SERVER) {                                                                                                                                    
+        return "Failed to connect to server";                                                                                                                     
+    }                                                                                                                                                             
+    if (reason == NOT_RESOLVED) {                                                                                                                                 
+        return "Failed to resolve server";                                                                                                                        
+    }                                                                                                                                                             
+    return ""                                                                                                                                                     
+}                                                                                                                                                                 
+                                                                                                                                                                  
+function onConnected(status) {                                                                                                                                    
+    if (status == SERVER_CONNECTED) {                                                                                                                             
+        server.log("Reconnected after unexpected disconnect " +  disconnectReason);                                                                               
+    }                                                                                                                                                      
+}                                                                                                                                                                 
+                                                                                                                                                                  
+function tryToConnect() {                                                                                                                                          
+    if (!server.isconnected()) {                                                                                                                                  
+        server.connect(onConnected, 30);                                                                                                                          
+        imp.wakeup(120, tryToConnect);                                                                                                                            
+    }                                                                                                                                                            
+}                                                                                                                                                                 
+                                                                                                                                                                  
+function onUnexpectedDisconnect(status) {                                                                                                                         
+    disconnectReason = getDisconnectReason(status);                                                                                         
+    imp.wakeup(120, tryToConnect);                                                                                                         
+}                                                                                                                                                                 
+                                                                                                                                                                  
+gtemp <- 0;                                                                                                                                                       
+gpressure <- 0;                                                                                                                                                   
+gformin <- 300; // init value in seconds - take samples                                                                                                            
+enable_reg <- 1; // regulator on = 1, off = 0   
+gbatvoltage <- 0.0; // global battery voltage
+voltage_enable <- 1; //1  enable high or 0 enable low
+digital_out_mode <- DIGITAL_OUT; 
+                                                                                                                                                                  
+triggerTemp <- 93; // temp F                                                                                                                                      
+// hysteresis applied                                                                                                                                             
+triggerTempCrossOver <- 0; // remember trigger state                                                                                                              
+alarmMax <- 163.0; // alarm for tank inches                                                                                                                       
+inchScale <- 1.0; // scaling for testing tank inch height                                                                                                         
+ 
+agent.on("interval", function(interval)
+{
+//    nv <- {gformin = interval.interval};
+    nv.gformin = interval.interval;
+//    gformin = interval.interval;
+    server.log("**Received sample interval: "+nv.gformin);
+});
+
+agent.on("voltage_enable", function(voltage_enable)
+{
+//    nv <- {voltage_enable = voltage_enable.voltage_enable};
+    nv.voltage_enable = voltage_enable.voltage_enable;
+//    voltage_enable = voltage_enable.voltage_enable;
+//    voltage_enable = nv.voltage_enable;
+    server.log("***Received voltage_enable: "+nv.voltage_enable);
+});
+/*
+class FormInput extends InputPort                                                                                                                                 
+{                                                                                                                                                                 
+    name = "Form Get Info";                                                                                                                                       
+    type = "number";                                                                                                                                              
+    constructor()                                                                                                                                                 
+    {                                                                                                                                                             
+//        server.log("In FormInput Constructor!");                                                                                                                
+    }                                                                                                                                                             
+                                                                                                                                                                  
+    function set(info)                                                                                                                                            
+    {                                                                                                                                                             
+        server.show(format("From form: %d", info));                                                                                                               
+        server.log(format("From form: %d", info));                                                                                                                
+        gformin = info; // set global with info                                                                                                                   
+        // when we receive something get temp and send it back                                                                                                    
+        getPressure();                                                                                                                                            
+    }                                                                                                                                                             
+}                                                                                                                                                                 
+*/                                                                                                                                                                  
+function getTemp()                                                                                                                                                
+{                                                                                                                                                                 
+    local analogval = hardware.pin5.read(); // 0 - 65535                                                                                                          
+    local tempC = ((analogval * 0.00005035)-0.5)*100.0;                                                                                                           
+    local tempF = (9.0/5.0)*tempC + 32.0;                                                                                                                         
+    gtemp = tempF; // set global temp var                                                                                                                         
+//    agent.send("Temperature",{kind="Temperature", key=COSMKey, feed=COSMFeed, value=tempF });                                                                     
+    local d = date();                                                                                                                                             
+    if(tempF >= triggerTemp)                                                                                                                                      
+    {                                                                                                                                                             
+//        agent.send("sendSMS", { mess= format("Temperature Trigger: %6.3f reached! %s", tempF, impID), highlevelalarm= 0, other=1});                                                                    
+        if(!triggerTempCrossOver) // just crossed over                                                                                                            
+        {                                                                                                                                                         
+            triggerTempCrossOver = 1;                                                                                                                             
+        }                                                                                                                                                         
+    } else if(tempF < triggerTemp * 0.90) // temp is less than trigger less 10%                                                                                   
+    {                                                                                                                                                             
+        // this allows some hysteresis                                                                                                                            
+        triggerTempCrossOver = 0;                                                                                                                                 
+    } 
+    return tempF;
+}                                                                                                                                                                 
+                 
+// The imp has 12 bit ADC and maps it across 65536 range                                                                                                          
+// so 0-3.3V maps to 0-65535  
+function getBatteryVoltage()
+{
+    local adval = hardware.pin9.read(); // 0 - 65535
+    local volts = (hardware.voltage()/4096.0) * (adval/16.0); 
+    // R1 = 357k and R2 = 96.7k (actual measurements)
+    // Vbat = V (R1 + R2)/R2    // from the voltage divider
+    local vbat = volts * (357 + 96.7)/96.7;
+    gbatvoltage = vbat; // assign to global variable
+    return vbat;
+}
+                                                                                                                                                                  
+// The imp has 12 bit ADC and maps it across 65536 range                                                                                                          
+// so 0-3.3V maps to 0-65535                                                                                                                                      
+// Transducer range is .5-2.5V, starting at 0psi                                                                                                                  
+// ratio is 65535/3.3 = 19,859/V                                                                                                                                  
+// thus 0 psi should read about 9,929                                                                                                                             
+function getPressure()                                                                                                                                            
+{                                                                                                                                                                 
+    local analogval = hardware.pin7.read(); // 0 - 65535                                                                                                          
+    local volts = (hardware.voltage()/4096.0) * (analogval/16.0); // calc pressure here                                                                           
+
+    local pressure = 63.0/70.0 * volts;                                                                                                                           
+    local density = 0.82; // density of crude oil                                                                                                                 
+    density = 0.035714;                                                                                                                                           
+    local inches = 70 * volts - 35.0;  
+    local switch0 = hardware.pin1.read();
+    local switch1 = hardware.pin2.read();
+                                                                                                                                                                  
+    inches *= inchScale; // scale 16 inches to 144 inches for testing                                                                                             
+    if(inches >= alarmMax)                                                                                                                                        
+    {                                                                                                                                                             
+//        agent.send("sendSMS", {mess=format("High Level Alert Warning! Inches at: %d Imp: %s", inches, impID), highlevelalarm=0, other=1});                                                          
+    }                                                                                                                                                             
+    local feet = (50631.0 - analogval) * 0.00042919;                                                                                                              
+    local barrels = inches * 200 / 180; // 200bbl/180in tank ratio                                                                                                
+    local d = date();                                                                                                                                             
+    server.log(format("%02d-%02d-%d %02d:%02d.%02d, pressure: %8.3f, analog val: %d, switch: %d, switch1: %d, %6.1f degF IMP: %6.1f rssi, %6.3f v, mem %d, ID: %s, bssid: %s, macaddr: %s, reg: %s, Vbat: %6.3f, Period: %d, v-enable: %s",       
+                        d.month+1, d.day, d.year, d.hour, d.min, d.sec,
+                        pressure, analogval, switch0, switch1, gtemp, imp.rssi(),
+                        hardware.voltage(), imp.getmemoryfree(), hardware.getimpeeid(),
+                        imp.getbssid(), imp.getmacaddress(), enable_reg?"on ":"off ",
+                        gbatvoltage, gformin, nv.voltage_enable?"true":"false"
+                        )); 
+
+    agent.send("csv",format("%s,%6.1f\n%s,%6.3f\n%s,%d\n%s,%6.3f\n%s,%6.3f\n%s,%6.3f\n%s,%d\n%s,%d", 
+    "Status_ImpVolts", hardware.voltage(), 
+    "Status_Signal_Strength", imp.rssi(),           // ))
+    "Status_BootPass", nv.count,
+    "Status_vbat", getBatteryVoltage(),
+    "Temperature", gtemp,
+    "Volts", volts,
+    "Switch", switch0,
+    "Switch1", (switch1?0:1)
+    ));
+}    // function getPressure()                                                                                                                                                              
+                                                                                                                                                                  
+function getAnalogData()                                                                                                                                          
+{                                                                                                                                                                 
+//    hardware.pin8.write(1); // alternately turn regulator on/off for testing
+//    hardware.pin8.write(nv.voltage_enable?1:0); // alternately turn regulator on/off for testing
+    hardware.pin8.write(0);
+    imp.sleep(0.5); // block code for 100ms while sensors wake up 
+
+    getBatteryVoltage(); // get battery voltage
+
+    getTemp();
+    getPressure(); // pressure takes quite a while                                                                                                                
+//    hardware.pin8.write(0); // turn off regulator after sampling
+//    hardware.pin8.write(!nv.voltage_enable?1:0); // turn off regulator after sampling
+    hardware.pin8.write(1);
+    
+//    hardware.pin8.write(0); // turn off 
+    
+    imp.onidle(function() {server.sleepfor(gformin)});        
+//    agent.send("sendSMS", {mess="", highlevelalarm=(hardware.pin2.read()?0:1), other=0});
+} // function getAnalogData()        
+
+
+// Configure Pin1 to be wake up pin                                                                                                                               
+// hardware.pin1.configure(DIGITAL_IN_WAKEUP);                                                                                                                    
+                                                                                                                                                                  
+// hardware.pin1.configure(DIGITAL_IN_PULLUP);                                                                                                                    
+hardware.pin1.configure(DIGITAL_IN_PULLUP);                                                                                                                       
+// hardware.pin1.configure(DIGITAL_IN_PULLUP);                                                                                                                    
+hardware.pin2.configure(DIGITAL_IN_PULLUP);                                                                                                                       
+// Analog read on pin 5 for temp                                                                                                                                  
+hardware.pin5.configure(ANALOG_IN);                                                                                                                               
+// Analog read on pin 7 for pressure                                                                                                                              
+hardware.pin7.configure(ANALOG_IN); 
+
+// Digital Write on pin 8 - control 3V regulator for sensors                                                                                                      
+// hardware.pin8.configure(digital_out_mode); 
+hardware.pin8.configure(DIGITAL_OUT);
+    hardware.pin8.write(1); // **********
+
+// hardware.pin8.write(!nv.voltage_enable?1:0); // turn off 
+ //hardware.pin8.write(1);
+ //hardware.pin8.write(1);
+
+// Analog read on pin 9 for scaled battery voltage                                                                                                                             
+hardware.pin9.configure(ANALOG_IN); 
+
+// imp.configure(impID, [FormInput()], []);     
+// imp.configure("Field Test Sensor", [FormInput()], []);     
+// hardware.pin8.write(!nv.voltage_enable?1:0); // turn off 
+
+// Update a field in the table if it is present                                                                                                                   
+// else initialise the table with a field                                                                                                                         
+local boot = "cold";                                                                                                                                              
+if (("nv" in getroottable()) && ("count" in nv))                                                                                                                  
+{   // warm boot - nv present                                                                                                                                     
+    nv.count++; 
+    gformin = nv.gformin; // gformin controls the sample interval
+    voltage_enable = nv.voltage_enable;
+    // Display the sleep count on our node                                                                                                                        
+//    server.show("--------Start Program------------Warm Boot Pass #" + nv.count);                                                                                  
+    server.log("--------Start Program------------Warm Boot Pass #" + nv.count);                                                                                   
+    boot = "warm";                                                                                                                                                
+}                                                                                                                                                                 
+else                                                                                                                                                              
+{   // cold boot - create nv & init count 
+//    nv <- { count = 1 };
+//    nv.gformin <- 10; // default sample interval
+//    nv.voltage_enable <- true; // default enable is active high
+    nv <- {count = 1, gformin = 1800, voltage_enable = 1};
+
+    // Display the sleep count on our node                                                                                                                        
+//    server.show("--------Start Program------------Cold Boot Pass #" + nv.count);                                                                                  
+    server.log("--------Start Program------------Cold Boot Pass #" + nv.count);                                                                                   
+    boot = "cold";                                                                                                                                                
+//    agent.send("sendSMS", {mess="Starting Up Imp Cold Boot! " + impID, highlevelalarm=0, other=1});                                                                                                 
+}                                                                                                                                                                 
+                                                                                                                                                                  
+imp.enableblinkup(true);                                                                                                                                          
+                                                                                                                                                                  
+local endtime = hardware.millis() + 10 * 1000; // set the end time by adding msecs                                                                                
+while(boot == "cold" && (endtime - hardware.millis()) > 0) {                                                                                                      
+    if (hardware.millis()%1000 == 0) {                                                                                                                            
+        server.log("Blink up anyone?");                                                                                                                           
+    }                                                                                                                                                             
+    if ((endtime - hardware.millis()) < 0) { // time expired?                                                                                                     
+        break;                                                                                                                                                    
+    }                                                                                                                                                             
+}                                                                                                                                                                 
+//hardware.pin8.write(!nv.voltage_enable?1:0); // turn off 
+// hardware.pin8.write(1); // turn off 
+// imp.sleep(0.5); // block code for 100ms while sensors wake up 
+// hardware.pin8.write(0); // turn on
+// First tell the agent the identity of the imp from it's impID
+agent.send("impid", {ImpID = format("%s",hardware.getimpeeid()), BootCount = nv.count});
+
+getAnalogData();                                                                                                                                                  
+// hardware.pin8.write(1); // turn off                                                                                                                                                                   
