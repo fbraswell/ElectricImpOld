@@ -1,0 +1,87 @@
+// FMB Get Pressure from Sensor & temp
+
+// Output structure for sending temperature to server
+tempOut    <- OutputPort("Temperature (F)", "number");
+tempOutStr <- OutputPort("Temperature (F)", "string");
+pressureOutStr <- OutputPort("Pressure", "string");
+pressureOut <- OutputPort("Pressure", "number");
+
+gtemp <- 0;
+gpressure <- 0;
+gformin <- 30; // init value
+
+class FormInput extends InputPort
+{
+    name = "Form Get Info";
+    type = "number";
+    constructor()
+    {
+        server.log("In FormInput Constructor!");
+    }
+    
+    function set(info)
+    {
+        server.show(format("From form: %d", info));
+        server.log(format("From form: %d", info));
+        gformin = info; // set global with info
+        // when we receive something get temp and send it back
+        getPressure();
+    }
+}
+
+function getTemp()
+{
+    local analogval = hardware.pin5.read();
+//    local tempC = ((analogval * 0.00005035)-0.5)*100.0;
+    local tempC = ((analogval>>4) * (hardware.voltage()/4096) - 0.5) * 100.0;
+    local tempF = (9.0/5.0)*tempC + 32.0;
+    gtemp = tempF; // set global temp var
+    tempOut.set(tempF);
+    tempOutStr.set(format("TempC: %6.3f; TempF: %6.3f", tempC, tempF));
+    local d = date();
+//    server.log(format("date: Year: %d Mo: %d Day: %d -  %d:%d.%d", d.year, d.month+1, d.day, d.hour, d.min, d.sec));
+    server.log(format("%d-%d-%d %d:%d.%d TempF: %6.3f", d.month+1, d.day, d.year, d.hour, d.min, d.sec, tempF));
+//    imp.wakeup(5, getTemp);
+}
+
+# The imp has 12 bit ADC and maps it across 65536 range
+# so 0-3.3V maps to 0-65535
+# Transducer range is .5-2.5V, starting at 0psi
+# ratio is 65535/3.3 = 19,859/V
+# thus 0 psi should read about 9,929
+function getPressure()
+{
+    local analogval = hardware.pin7.read();
+    local pressure = (hardware.voltage()/4096) * (analogval>>4); // calc pressure here
+    pressureOut.set(pressure);
+    pressureOutStr.set(format("Pressure: %6.3f", pressure));
+    server.log(format("pressure: %6.3f, %6.1f degF IMP: %6.1f rssi, %6.3f v, mem %d, ID: %s, bssid: %s, macaddr: %s", 
+                        pressure, gtemp, imp.rssi(), 
+                        hardware.voltage(), imp.getmemoryfree(), hardware.getimpeeid(), 
+                        imp.getbssid(), imp.getmacaddress()));
+}
+ 
+function getAnalogData()
+{
+    getTemp();
+    getPressure();
+    imp.wakeup(gformin, getAnalogData);
+//    imp.onidle(function() {server.sleepfor(gformin)});
+}
+
+// Analog read on pin 5 for temp
+hardware.pin5.configure(ANALOG_IN);
+
+// Analog read on pin 7 for pressure
+hardware.pin7.configure(ANALOG_IN);
+
+// Get on the planner
+
+imp.configure("Pressure & Temp Measurement", [FormInput()], [tempOut, tempOutStr, pressureOut, pressureOutStr]);
+
+server.log("--------Start Program------------"); 
+
+// enter power save mode
+imp.setpowersave(true);
+
+getAnalogData();
