@@ -1,0 +1,85 @@
+const informa_level_sensor = "2348143643fc42ee";
+const wellmark_level_sensor = "2342173643fc42ee";
+const wellmark_685e = "237c523643fc42ee";
+const wellmark_chem_pump = "231a80eb6e4936ee";
+const wellmark_high_level_alarm = "232ace4dead3dbee";
+const WM_2366_high_level_alarm = "23669d4dead3dbee";
+const WM_2307_high_level_alarm = "230789eb6e4936ee"; // chem
+const WM_2313_high_level_alarm = "23139deb6e4936ee";
+const WM_2325_high_level_alarm = "233252b236a7c9ee";
+const WM_233c_high_level_alarm = "233c66eb6e4936ee"; // chem
+const WM_2356_high_level_alarm = "23560c4cead3dbee";
+const WM_236f_high_level_alarm = "236f544cead3dbee";
+const WM_2370_high_level_alarm = "23703eeb6e4936ee";
+const WM_2371_high_level_alarm = "23712eeb6e4936ee";
+const WM_2348_high_level_alarm = "2348143643fc42ee";
+const WM_2342_high_level_alarm = "2342173643fc42ee";
+const WM_237c_high_level_alarm = "237c523643fc42ee";
+
+// bssid: 881fa13a9c3c     SOM Network3                Home Network
+// bssid: 0015ff7bf869     Verizon-MiFi5510L-F869      Verizon Jetpack 
+// bssid: 0015ff6109ef     SA2100-WSXW                 Novatel Modem
+
+// WellMark chem pump Xively feed
+// Data feed: 467812498
+// "X-Api-Key": "XEiiq8NpLgyLWXMICo1CsQRQa2Fd5vJ9omtmvQhSPNiyHKlX" = 230789eb6e4936ee
+
+// WellMark flow test Xively feed
+// Data feed: 2116002450
+// "X-Api-Key": "RhNcfs5gkF93Bzw5RGywafbwpRHYZnryrSwVndoxlibi3vak" = 233c66eb6e4936ee
+
+agent_myimpid <- 0; // Imp ID
+agent_myapikey <- 0; // api key
+agent_myfeed <- 0;  // feed id
+
+// This function gets the ImpID from the associated Imp
+// and then connects it to a specific Xively data feed
+device.on("impid", function(impid)
+{
+//    server.log("Agent received ImpID: "+impid.ImpID);
+    agent_myimpid = impid.ImpID;
+    server.log("Agent received ImpID: "+agent_myimpid);
+    if (agent_myimpid == "230789eb6e4936ee")
+    {
+        agent_myapikey = "XEiiq8NpLgyLWXMICo1CsQRQa2Fd5vJ9omtmvQhSPNiyHKlX";
+        agent_myfeed = 467812498;
+    } else if (agent_myimpid == "233c66eb6e4936ee")
+    {
+        agent_myapikey = "RhNcfs5gkF93Bzw5RGywafbwpRHYZnryrSwVndoxlibi3vak";
+        agent_myfeed = 2116002450;
+    }
+    server.log("Agent api key: "+agent_myapikey);
+
+});
+
+function fetchNewSetpoint() {
+    http.get("https://wellmark.webscript.io/commands").sendasync(function(response) {
+        server.log("Found new set point: " + response.body);
+        device.send("newsetpoint", response.body.tofloat());
+    });
+}
+
+device.on("csv", function(csv) {
+    
+    if (csv.len() > 0){
+        server.log("Sending Xively this data: " + csv);    
+        
+//        http.put("https://api.xively.com/v2/feeds/"+agent_myfeed+".csv", {
+//        http.put("https://api.xively.com/v2/feeds/467812498.csv", {
+//            "X-Api-Key": "XEiiq8NpLgyLWXMICo1CsQRQa2Fd5vJ9omtmvQhSPNiyHKlX",
+//        http.put("https://api.xively.com/v2/feeds/"+agent_myfeed+".csv", {
+        http.put(format("%s%d%s","https://api.xively.com/v2/feeds/", agent_myfeed, ".csv"), {
+            "X-Api-Key": agent_myapikey,
+            "Authorization": "Basic ZmJyYXN3ZWxsOm1lcnJpdHQxODY1"
+        }, csv).sendasync(function(response) {
+            server.log(response.statuscode);
+            fetchNewSetpoint();
+        });
+    }
+    else {
+        server.log("Nothing to send to Xively.");    
+        fetchNewSetpoint();
+    }
+
+    
+});
