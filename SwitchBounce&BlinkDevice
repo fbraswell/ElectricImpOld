@@ -1,0 +1,159 @@
+// FMB Single switch & Blink
+ 
+// Create output object
+out1 <- OutputPort("Switch7", "number");
+
+// Output structure for sending temperature to server
+local tempOut    = OutputPort("Temperature (F)", "number");
+local tempOutStr = OutputPort("Temperature (F)", "string");
+ 
+// Store the last state so we know when we've changed; this starts out as -1 until we read the switch
+laststate <- -1;
+
+// Variable to represent LED state
+ledState <- 0;
+
+// Variable to represent LED inhibit state
+inhibit <- 0;
+
+// input class for LED control channel
+class input extends InputPort
+{
+  name = "LED control"
+  type = "number"
+ 
+  function set(value)
+  {
+      if(value == 0)
+      {
+          // 0 = Inhibit LED operation
+          inhibit = 1;
+      }
+      else
+      {
+          // 1 = Enable LED operation
+          inhibit = 0;
+          blink();
+      }
+  }
+}
+
+function getTemp()
+{
+    local analogval = hardware.pin5.read();
+    local tempC = ((analogval * 0.00005035)-0.5)*100.0;
+    local tempF = (9.0/5.0)*tempC + 32.0;
+    tempOut.set(tempC);
+    tempOutStr.set(format("TempC: %6.3f; TempF: %6.3f", tempC, tempF));
+    local d = date();
+    server.log(format("date: Year: %d Mo: %d Day: %d -  %d:%d.%d", d.year, d.month+1, d.day, d.hour, d.min, d.sec));
+    imp.wakeup(5, getTemp);
+}
+
+// blink function called every 100ms
+function blink()
+{
+    // Check if we've been switched off
+    if(inhibit)
+    {
+        // Blinking inhibited, turn off the LED
+        hardware.pin1.write(0);
+    }
+    else
+    {
+        // Change state
+        ledState = ledState?0:1;
+ 
+        // Reflect state to the pin
+        hardware.pin1.write(ledState);
+ 
+        // Schedule the next state change
+        imp.wakeup(1.0, blink);
+    }
+}
+ 
+// Debounce code: ignore transitions for 50ms after event
+ignore <- false;
+function debounce() {
+    // We can take notice of transitions from now onward
+    ignore = false;
+ 
+    // Ensure state is in sync
+    check_state();
+} 
+ 
+function check_state() // Switch
+{
+//    while(1)
+//    {
+        local s = hardware.pin7.read();
+        
+//        imp.wakeup(0.5,"");
+    // Has the state changed?
+//    s = hardware.pin1.read();
+    if (s != laststate) 
+    {
+        // Yes, note the state, send it, and update the planner
+        laststate = s;
+        out1.set(s);
+//        server.show(s?"xon":"xoff");
+//        server.log(s?"xon":"xoff");
+//        server.show(s?"Open":"Pressed");
+//        server.log(s?"Open":"Pressed");
+        server.show(format("%s; Signal: %d dBm; Volts: %.01f", s?"Open":"Pressed", imp.rssi(), hardware.voltage()));
+        server.log(format("%s; Signal: %d dBm; Volts: %.01f", s?"Open":"Pressed", imp.rssi(), hardware.voltage()));
+        server.log
+    }        
+//    }
+    
+}
+ 
+// This function is called whenever the imp detects a change on Switch pin
+function switched() {
+    if (!ignore) 
+    {
+        check_state();
+ 
+        // Ignore bounces
+        ignore = true;
+        imp.wakeup(0.1, debounce);
+    }
+}
+ 
+
+
+// LED Configure pin 1 as an open drain output with internal pull up
+hardware.pin1.configure(DIGITAL_OUT_OD_PULLUP);
+ 
+// Read Switch. Set up pin1 to be an input with a pull-up. This means it'll float high when the switch is open.
+// This also registers the callback handler "switched" which will be automatically called whenever the
+// pin changes state.
+hardware.pin7.configure(DIGITAL_IN_PULLUP, switched);
+
+// Analog read on pin 5 for temp
+hardware.pin5.configure(ANALOG_IN);
+
+// Register with the server
+// imp.configure("Blink-O-Matic", [input()], []);
+
+// Configure on Planner and register with Imp Server
+// imp.configure("Temperature Measurement", [], [tempOut, tempOutStr]);
+
+// Get on the planner
+// imp.configure("Switch7", [], [out1]);
+
+imp.configure("Temperature Measurement", [input()], [out1, tempOut, tempOutStr]);
+
+server.log("--------Start Program------------"); 
+
+// enter power save mode
+imp.setpowersave(true);
+
+// get temperature
+getTemp();
+
+// Start blinking
+blink();
+
+// Call check_state at startup to ensure things are in sync.
+check_state();
