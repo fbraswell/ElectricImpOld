@@ -1,0 +1,28 @@
+
+
+
+function fetchNewSetpoint() {
+    http.get("https://wellmark.webscript.io/commands").sendasync(function(response) {
+        server.log("Found new set point: " + response.body);
+        device.send("newsetpoint", response.body.tofloat());
+    });
+}
+
+device.on("csv", function(csv) {
+    
+    if (csv.len() > 0){
+        server.log("Sending Xively this data: " + csv);    
+        
+        http.put("https://api.xively.com/v2/feeds/2116002450.csv", {
+            "X-Api-Key": "RhNcfs5gkF93Bzw5RGywafbwpRHYZnryrSwVndoxlibi3vak",
+            "Authorization": "Basic ZmJyYXN3ZWxsOm1lcnJpdHQxODY1"
+        }, csv).sendasync(function(response) {
+            server.log(response.statuscode);
+            fetchNewSetpoint();
+        });
+    }
+    else {
+        server.log("Nothing to send to Xively.");    
+        fetchNewSetpoint();
+    }
+});
