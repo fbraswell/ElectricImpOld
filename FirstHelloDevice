@@ -1,0 +1,31 @@
+// Send Hello
+// Register with the Server
+imp.configure("First Program", [],[]);
+// Display Message
+server.log("Hello First Imp Program!");
+
+function send() {
+ server.log("..send message 30.0..")
+  // schedule imp to wakeup in ? seconds and do it again. 
+  imp.wakeup(30.0, send);
+}
+ 
+// start the loop
+send();
+
+// code end
+
+/*
+local mess = "..send message 5.0..";
+function send() {
+ server.log(mess)
+  // schedule imp to wakeup in .5 seconds and do it again. 
+  
+}
+
+while(1)
+{
+    imp.wakeup(5.0, send);
+    send();
+}
+*/
