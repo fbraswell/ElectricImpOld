@@ -1,0 +1,381 @@
+// FMB Get Pressure from Sensor & temp
+
+// enter power save mode
+imp.setpowersave(true);
+
+// handle unexpected disconnect
+// server.setsendtimeoutpolicy(RETURN_ON_ERROR, WAIT_FOR_ACK, 30);
+disconnectReason <- "";
+ 
+function getDisconnectReason(reason)
+{
+    if (reason == NO_WIFI) {
+        return "Wifi went away";
+    }
+    if (reason == NO_IP_ADDRESS) {
+        return "Failed to get IP address";
+    } 
+    if (reason == NO_SERVER) {
+        return "Failed to connect to server";
+    }
+    if (reason == NOT_RESOLVED) {
+        return "Failed to resolve server";
+    } 
+    return ""
+}
+ 
+function onConnected(status)
+{
+    if (status == SERVER_CONNECTED) {
+        server.log("Reconnected after unexpected disconnect " +  disconnectReason);   
+    }
+}
+ 
+function tryToConnect()
+{
+    if (!server.isconnected()) {
+        server.connect(onConnected, 30);
+        imp.wakeup(120, tryToConnect);
+    }
+}
+ 
+function onUnexpectedDisconnect(status)
+{
+    disconnectReason = getDisconnectReason(status);
+    imp.wakeup(120, tryToConnect);
+}
+ 
+// server.onunexpecteddisconnect(onUnexpectedDisconnect);
+
+// Imp Table
+// imp boards
+
+// Imp 1 Demo 2342173643fc42ee
+// Imp 2 237c523643fc42ee
+// Imp 3 2348143643fc42ee
+// const imp3 = "2348143643fc42ee"; // Demo
+// const imp2 = "237c523643fc42ee";
+// const imp1 = "2342173643fc42ee";
+
+// 0c2a690008a2 imp2 macaddr
+// 0c2a69000c03 imp1 macaddr
+// 0c2a690012f4 imp3 macaddr
+
+// 48282fc363f4 bassid - John's hot spot 
+// 7ec537f05356 bassid - Frank's iPhone tether
+// 001f5b86ee76 bassid - SOM3 Home Network
+// ae5877784cad bassid - John's iPhone tether
+
+local impTable = 
+{
+    imp1  = "Systems of Merritt, Inc."
+    imp2  = "Jackson Oil Company"
+ //   imp3  = "Wilson Production Company"
+    imp3 = "WellMark"
+}
+
+// Output structure for sending temperature to server
+/*
+tempOutStrF <- OutputPort("Temperature (F)", "string");
+pressureOutStr <- OutputPort("Pressure", "string");
+tempOutF    <- OutputPort("Temperature (F)", "number");
+
+tankADCOut <- OutputPort("tankADCvalue", "number");
+tankVoltsOut <- OutputPort("tankVolts", "number");
+tankPressureOut <- OutputPort("tankPressure", "number");
+tankInchesOut <- OutputPort("tankInches", "number");
+tankBarrelsOut <- OutputPort("tankBarrels", "number");
+impVoltsOut <- OutputPort("ImpVolts", "number");
+impRSSIOut <- OutputPort("ImpRSSI", "number");
+*/
+gtemp <- 0;
+gpressure <- 0;
+gformin <- 30; // init value in seconds - take samples
+enable_reg <- 1; // regulator on = 1, off = 0
+
+triggerTemp <- 93; // temp F
+// hysteresis applied
+triggerTempCrossOver <- 0; // remember trigger state
+alarmMax <- 163.0; // alarm for tank inches
+inchScale <- 1.0; // scaling for testing tank inch height
+
+class FormInput extends InputPort
+{
+    name = "Form Get Info";
+    type = "number";
+    constructor()
+    {
+//        server.log("In FormInput Constructor!");
+    }
+    
+    function set(info)
+    {
+        server.show(format("From form: %d", info));
+        server.log(format("From form: %d", info));
+        gformin = info; // set global with info
+        // when we receive something get temp and send it back
+        getPressure();
+    }
+}
+
+function getTemp()
+{
+    local analogval = hardware.pin5.read(); // 0 - 65535
+    local tempC = ((analogval * 0.00005035)-0.5)*100.0;
+    local tempF = (9.0/5.0)*tempC + 32.0;
+    gtemp = tempF; // set global temp var
+//    tempOutF.set(tempF);
+    agent.send("Temperature",{kind="Temperature", key=COSMKey, feed=COSMFeed, value=tempF });
+//    agent.send("tankTemp",{value=tempF, kind="tankTemp"});
+//    tempOutStrF.set(format("TempC: %6.3f; TempF: %6.3f", tempC, tempF));
+    local d = date();
+//    server.log(format("date: Year: %d Mo: %d Day: %d -  %d:%d.%d", d.year, d.month+1, d.day, d.hour, d.min, d.sec));
+//    server.log(format("%d-%d-%d %d:%d.%d TempF: %6.3f", d.month+1, d.day, d.year, d.hour, d.min, d.sec, tempF));
+//    imp.wakeup(5, getTemp);
+    if(tempF >= triggerTemp)
+    {
+        agent.send("sendSMS", format("Temperature Trigger: %6.3f reached! %s", tempF, impID));
+        if(!triggerTempCrossOver) // just crossed over
+        {
+            triggerTempCrossOver = 1;
+//            agent.send("sendSMS", format("Temperature Trigger: %6.3f reached!", tempF));
+        }
+    } else if(tempF < triggerTemp * 0.90) // temp is less than trigger less 10%
+    {
+        // this allows some hysteresis
+        triggerTempCrossOver = 0;
+    }
+}
+
+# The imp has 12 bit ADC and maps it across 65536 range
+# so 0-3.3V maps to 0-65535
+# Transducer range is .5-2.5V, starting at 0psi
+# ratio is 65535/3.3 = 19,859/V
+# thus 0 psi should read about 9,929
+function getPressure()
+{
+    local analogval = hardware.pin7.read(); // 0 - 65535
+    agent.send("ADCval",{kind="ADCval", key=COSMKey, feed=COSMFeed, value=analogval });
+//    tankADCOut.set(analogval);
+//    local pressure = analogval * 1.0; // calc pressure here
+    local volts = (hardware.voltage()/4096.0) * (analogval/16.0); // calc pressure here
+//    tankVoltsOut.set(volts);
+        agent.send("Volts",{kind="Volts", key=COSMKey, feed=COSMFeed, value=volts });
+//    local pressure = 120.0 * volts - 60.0;
+//    local pressure = 4.285 * volts - 2.1425;
+    local pressure = 63.0/70.0 * volts;
+//    tankPressureOut.set(pressure);
+    local density = 0.82; // density of crude oil
+    density = 0.035714;
+//    local inches = pressure / density;
+    local inches = 70 * volts - 35.0;
+    
+    inches *= inchScale; // scale 16 inches to 144 inches for testing
+    if(inches >= alarmMax)
+    {
+        agent.send("sendSMS", format("High Level Alert Warning! Inches at: %d Imp: %s", inches, impID));
+    }
+// agent.send("Level",{kind="Level", key=COSMKey, feed=COSMFeed, value=inches });
+// calc feet based on WellMark 685E calibration
+// the analogval is 0-65535 from the ADC
+    local feet = (50631.0 - analogval) * 0.00042919;
+ agent.send("Level",{kind="Level", key=COSMKey, feed=COSMFeed, value=feet });
+//    tankInchesOut.set(inches);
+// ***    agent.send("Pressure",{kind="Pressure", key=COSMKey, feed=COSMFeed, value=pressure });
+//    agent.send("tankPressure",{value=pressure, kind="tankPressure"});
+    local barrels = inches * 200 / 180; // 200bbl/180in tank ratio
+agent.send("Barrels",{kind="Barrels", key=COSMKey, feed=COSMFeed, value=barrels });
+//    tankBarrelsOut.set(barrels);
+//    impVoltsOut.set(hardware.voltage());
+//    impRSSIOut.set(imp.rssi());
+//    local pressure = inches;
+//    pressure = volts;
+//    tankPressureOut.set(pressure);
+//    pressureOutStr.set(format("Pressure: %6.3f", pressure));
+    local d = date();
+    // server.log(format("%d-%d-%d %d:%d.%d UT, TempF: %6.3f", d.month+1, d.day, d.year, d.hour, d.min, d.sec, tempF));
+    server.log(format("%02d-%02d-%d %02d:%02d.%02d, pressure: %8.3f, %6.1f degF IMP: %6.1f rssi, %6.3f v, mem %d, ID: %s, bssid: %s, macaddr: %s, reg: %s", 
+                        d.month+1, d.day, d.year, d.hour, d.min, d.sec,
+                        pressure, gtemp, imp.rssi(), 
+                        hardware.voltage(), imp.getmemoryfree(), hardware.getimpeeid(), 
+                        imp.getbssid(), imp.getmacaddress(), enable_reg?"on ":"off "));
+    agent.send("Signal_Strength",{kind="Signal_Strength", key=COSMKey, feed=COSMFeed, value=imp.rssi() });
+    agent.send("ImpVolts",{kind="ImpVolts", key=COSMKey, feed=COSMFeed, value=hardware.voltage() });
+    agent.send("Switch",{kind="Switch", key=COSMKey, feed=COSMFeed, value=hardware.pin1.read() });
+    agent.send("Switch1",{kind="Switch1", key=COSMKey, feed=COSMFeed, value=(hardware.pin2.read()?0:1) });
+}
+ 
+function getAnalogData()
+{
+//    enable_reg = enable_reg?0:1;
+    hardware.pin8.write(1); // alternately turn regulator on/off for testing
+    imp.sleep(0.5); // block code for 100ms while sensors wake up
+    getTemp(); // temp wakes up pretty fast 
+    getPressure(); // pressure takes quite a while
+    hardware.pin8.write(0); // turn off regulator after sampling
+//    imp.wakeup(gformin, getAnalogData);
+    imp.onidle(function() {server.sleepfor(gformin)});
+}
+
+// Configure Pin1 to be wake up pin
+// hardware.pin1.configure(DIGITAL_IN_WAKEUP);
+
+// hardware.pin1.configure(DIGITAL_IN_PULLUP);
+hardware.pin1.configure(DIGITAL_IN_PULLUP);
+// hardware.pin1.configure(DIGITAL_IN_PULLUP);
+hardware.pin2.configure(DIGITAL_IN_PULLUP);
+// Analog read on pin 5 for temp
+hardware.pin5.configure(ANALOG_IN);
+// Analog read on pin 7 for pressure
+hardware.pin7.configure(ANALOG_IN);
+// Digital Write on pin 8 - control 3V regulator for sensors
+hardware.pin8.configure(DIGITAL_OUT);
+
+// Get on the planner
+// getimpeeid()
+// imp.configure("Pressure & Temp Measurement", [FormInput()], [tempOut, tempOutStr, pressureOut, pressureOutStr]);
+// imp.configure(impTable{hardware.getimpeeid()}, [FormInput()], [tempOut, tempOutStr, pressureOut, pressureOutStr]);
+// local impID = hardware.getimpeeid();
+
+/*
+wellmark-pressure
+curl -H 'X-Api-Key: eYMWmzRjJiw4BKMrXRWCybPL34btUnXkzlM1HVbqgCXT5I6z' -H 'Authorization: Basic ZmJyYXN3ZWxsOm1lcnJpdHQxODY1' https://api.xively.com/v2/feeds/1996698580
+wellmark-green
+curl -H 'X-Api-Key: 7kIKnP8yBw95WHCHiSScZzKnhX8RylyPiuc4mp1cQ90LKa8n' -H 'Authorization: Basic ZmJyYXN3ZWxsOm1lcnJpdHQxODY1' https://api.xively.com/v2/feeds/1996698580
+wellmark-high-level-alarm
+curl -H 'X-Api-Key: yiPzMQXWRgaBMhUh3CIOHwAC6cPYhcol9rOZvDfkyUS3RPGr' -H 'Authorization: Basic ZmJyYXN3ZWxsOm1lcnJpdHQxODY1' https://api.xively.com/v2/feeds/1996698580
+
+informa-pressure
+curl -H 'X-Api-Key: KmtZdDTb38xaY9iOe3Tf2d8h0IUzEOxOqcyixv60KGNnPpfr' -H 'Authorization: Basic ZmJyYXN3ZWxsOm1lcnJpdHQxODY1' https://api.xively.com/v2/feeds/1996698580
+informa-green
+curl -H 'X-Api-Key: smabDYH0LlEITnRxzL5afHAsqquWdRphRoxq6CQK1TiSA19i' -H 'Authorization: Basic ZmJyYXN3ZWxsOm1lcnJpdHQxODY1' https://api.xively.com/v2/feeds/1996698580
+informa-high-level-alarm
+curl -H 'X-Api-Key: BvmE5x1kc0o7SRGXnNWLU9nGHYjL3hVmukjohOEWB1LW5o9i' -H 'Authorization: Basic ZmJyYXN3ZWxsOm1lcnJpdHQxODY1' https://api.xively.com/v2/feeds/1996698580
+
+https://xively.com/manage/3Fzc88QBnzzgvxoPeUWF
+*/
+
+
+const imp1 = "2348143643fc42ee"; // Demo
+const imp2 = "237c523643fc42ee";
+const imp3 = "2342173643fc42ee";
+
+/*
+case
+impID = "Crump Production Co."; 
+COSMFeed = 124894;
+COSMKey = "YwOYPoRkWWyQhSw3K78tivNOuVSSAKx0cGZ5RDltVzZlND0g";
+
+case 
+"Merritt Production Co."; 
+COSMFeed = 124890;
+COSMKey = "YwOYPoRkWWyQhSw3K78tivNOuVSSAKx0cGZ5RDltVzZlND0g";
+
+case 
+"Wilson Production Company imp3"; 
+COSMFeed = 122175;
+COSMKey = "lnV3gh3KHdmWyf67UqlohKVDE8ySAKwrSWtDNFRod25rRT0g";
+*/
+
+impID <- "0"; // later might get impID from COSM?
+COSMFeed <- "0";
+COSMKey <- "0";
+switch (hardware.getimpeeid())
+{
+    case imp3: impID = "Crump Production Co."; 
+                COSMFeed = 124894;
+                COSMKey = "YwOYPoRkWWyQhSw3K78tivNOuVSSAKx0cGZ5RDltVzZlND0g";
+                break; 
+    case imp1: impID = "Merritt Production Co."; 
+                COSMFeed = 124890;
+                COSMKey = "YwOYPoRkWWyQhSw3K78tivNOuVSSAKx0cGZ5RDltVzZlND0g";
+                break;    
+    case imp2: impID = "WellMark imp2"; 
+                        COSMFeed = 1929153198;
+                        COSMKey = "f4dBTnKuVgJG8fkOXyMxI6PArVygv3CqDBju2thJ9x1uFXcM";
+                        break;           
+//    case imp2: impID = "Wilson Production Company imp3"; 
+//                        COSMFeed = 122175;
+//                        COSMKey = "lnV3gh3KHdmWyf67UqlohKVDE8ySAKwrSWtDNFRod25rRT0g";
+//                        break;           
+    default: impID = "Default"
+                        COSMFeed = 0;
+                        COSMKey = "0";
+}
+
+// imp.configure(impID, [FormInput()], [tempOutF, tankADCOut, tankVoltsOut, tankPressureOut,
+//                        tankInchesOut, tankBarrelsOut, impVoltsOut, impRSSIOut]);
+imp.configure(impID, [FormInput()], []);
+// server.log("--------Start 1 Program------------"); 
+
+// endtime <- 0;
+/*
+function blinkuptime()
+        {
+          while(1)
+          {
+            if (hardware.millis()%1000 == 0)
+            {
+                server.log("Blink up anyone?");
+            }
+           if ((endtime - hardware.millis()) < 0) // time expired?
+           {
+//               imp.onidle(function(){});
+//               getAnalogData();
+               return;
+               // imp.onidle(); // remove idle function
+           }
+           // blinkuptime()
+          }
+        }
+*/
+// Update a field in the table if it is present
+// else initialise the table with a field
+local boot = "cold";
+if (("nv" in getroottable()) && ("count" in nv))
+{   // warm boot - nv present
+    nv.count++;
+    // Display the sleep count on our node
+    server.show("--------Start Program------------Warm Boot Pass #" + nv.count);
+    server.log("--------Start Program------------Warm Boot Pass #" + nv.count);
+    boot = "warm";
+}
+else
+{   // cold boot - create nv & init count
+    nv <- {count = 1};
+    // Display the sleep count on our node
+    server.show("--------Start Program------------Cold Boot Pass #" + nv.count);
+    server.log("--------Start Program------------Cold Boot Pass #" + nv.count);
+    boot = "cold";
+    agent.send("sendSMS", "Starting Up Imp Cold Boot! " + impID);
+    // on cold boot give time for blink up
+//    endtime = hardware.millis() + 10 * 1000; // set the end time by adding msecs
+}
+
+imp.enableblinkup(true);
+// enter power save mode
+// imp.setpowersave(true);
+
+
+local endtime = hardware.millis() + 10 * 1000; // set the end time by adding msecs
+while(boot == "cold" && (endtime - hardware.millis()) > 0)
+{
+    if (hardware.millis()%1000 == 0)
+    {
+        server.log("Blink up anyone?");
+    }
+    if ((endtime - hardware.millis()) < 0) // time expired?
+    {
+//               imp.onidle(function(){});
+//               getAnalogData();
+        break;
+               // imp.onidle(); // remove idle function
+    }
+           // blinkuptime()
+}
+// getAnalogData();
+// blinkuptime(); // imp.onidle end
+getAnalogData();
+// imp.onidle(function() {server.sleepfor(gformin)});
+// server.sleepfor(gformin)
+
